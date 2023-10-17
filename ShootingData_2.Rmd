@@ -1,0 +1,292 @@
+---
+title: "NYPDShootingAnalysisProject"
+author: "Maris"
+date: "2023-09-19"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+#### Libraries used
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(vcd)
+```
+
+## NYPD Shooting Incident Data (Historic)
+
+####
+List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. This data can be used by the public to explore the nature of shooting/criminal activity.
+
+### Getting the data
+```{r get_shooting_data}
+# getting the link first
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+# reading in the data from the link
+nypd_ytd <- read.csv(url_in)
+```
+
+### Areas of analysis
+
+I wanted to look into three aspects of the data.
+
+1. Shooting location vs time of day (nighttime or daytime).
+
+2. Statistical murder vs the time of day.
+
+3. Shooting frequency distribution for days of the week
+
+
+
+### Removing unnecessary columns
+```{r remove_columns}
+# removing various columns
+nypd_ytd <- nypd_ytd %>% 
+  select(
+    -Latitude,
+    -Longitude,
+    -Lon_Lat,
+    -X_COORD_CD,
+    -Y_COORD_CD,
+    -PERP_RACE,
+    -VIC_RACE,
+    -PERP_AGE_GROUP,
+    #-OCCUR_TIME,
+    -BORO,
+    -LOC_OF_OCCUR_DESC,
+    -JURISDICTION_CODE,
+    -LOCATION_DESC,
+    -PRECINCT,
+    #-STATISTICAL_MURDER_FLAG,
+    -PERP_SEX,
+    -VIC_SEX,
+    -VIC_AGE_GROUP
+    )
+```
+
+## 1 Shooting location vs daylight or nighttime hours
+
+### Converting date strings to date and time objects
+```{r convert_date_time}
+# converting date strings to date objects
+nypd_ytd <- nypd_ytd %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+# converting time strings (characters) to time objects (this is a Period class object)
+nypd_ytd <- nypd_ytd %>% mutate(OCCUR_TIME = hms(OCCUR_TIME))
+```
+
+### Let's add a rough estimate of daytime/nightime for each shooting incident
+
+Here I am simply defining the DAYLIGHT as being between 5am and 10pm. It is not ideal
+because sunset and sunrise times vary during the year but this a "one size fits all"
+approach because I couldn't find sunset/sunrise data for all the years the data covers.
+```{r add_daylight}
+# adding a column that will contain True of False for daylight
+# we'll define the daylight as True between 5am and 10pm
+nypd_ytd <- nypd_ytd %>%
+  mutate(
+    DAYLIGHT = (OCCUR_TIME >= hms("05:00:00") & OCCUR_TIME <= hms("22:00:00") )
+    )
+```
+
+### Let's add a column for day of the week for each shooting
+```{r add_day}
+# adding a column that will contain day of the week
+nypd_ytd$OCCUR_WEEKDAY <- weekdays(nypd_ytd$OCCUR_DATE)
+```
+
+### Let's factor the days of the week, location, and stat murder flag classifications
+```{r factor_days_location}
+nypd_ytd$OCCUR_WEEKDAY <- as.factor(nypd_ytd$OCCUR_WEEKDAY)
+nypd_ytd$LOC_CLASSFCTN_DESC <- as.factor(nypd_ytd$LOC_CLASSFCTN_DESC)
+nypd_ytd$STATISTICAL_MURDER_FLAG <- as.factor(nypd_ytd$STATISTICAL_MURDER_FLAG)
+```
+
+### Removing NA and blanks from location classification
+
+A large number of the location classification entries were blank, so I removed them.
+```{r removing_na}
+nypd_subset <- nypd_ytd[!(nypd_ytd$LOC_CLASSFCTN_DESC == "" |
+                          is.na(nypd_ytd$LOC_CLASSFCTN_DESC)), ]
+
+```
+
+```{r summary_post}
+subset_summary = summary(nypd_subset)
+print(subset_summary)
+```
+
+### Using the subset data to generate a mosaic plot using mosaic function
+Y axis labels are overlapping the graph which I unfortunately wasn't able to fix.
+```{r location_daylight}
+mosaic(~ LOC_CLASSFCTN_DESC + DAYLIGHT, data = nypd_subset,
+       split_vertical = FALSE, # we want the rectangles to vary in width not height
+       # ensuring labels are horizontal and smaller font so they don't overlap
+       labeling_args = list(rot_labels = c(0, 0), gp_labels = gpar(fontsize = 6)) 
+       )
+```
+
+#### Same location classification and daylight data in number form
+
+We can see that during our defined daylight there are considerably more shootings 
+happening indoors - DWELLING, HOUSING. Transit shootings also seem to be much more
+prevalent during the daylight hours.
+
+```{r contingency_table_1}
+contingency_table <- table(nypd_subset$LOC_CLASSFCTN_DESC, nypd_subset$DAYLIGHT)
+print (contingency_table)
+```
+
+
+
+
+
+
+
+## 2 Statistical murder flag vs daylight or nighttime hours
+
+### Let's see if the daylight and statistical murder flag factors are independent
+Using the Chi-Square test to test the independence of statistical murder flag and
+daylight
+```{r independece_test}
+# checking for independence of two factors
+chisq_test_loc <- chisq.test(table(nypd_ytd$DAYLIGHT, nypd_ytd$STATISTICAL_MURDER_FLAG))
+
+chisq_test_loc
+```
+
+#### It's resulting in a low p-value, let's see what the plot looks like.
+
+### Let's try to plot the DAYLIGHT and STATISTICAL_MURDER_FLAG using a mosaicplot
+```{r stat_murder_flag_vs_daylight}
+relationship_table <- table(nypd_ytd$DAYLIGHT, nypd_ytd$STATISTICAL_MURDER_FLAG)
+
+mosaicplot(relationship_table, 
+           main="Mosaic Plot of Daylight and Statistical Murder Flag", 
+           xlab="Daylight", 
+           ylab="Statistical Murder Flag",
+           las = 1 #making labels appear horizontally
+           )
+```
+
+### Daytime vs nighttime lethality of shootings.
+
+Shootings that take place during our defined "daytime" hours seem to be slightly
+more likely to result in death. Potentially, the better visibility during the 
+daytime hours could be a factor that improves shooting accuracy, hence the 
+outcomes are more tragic. However, this could simply be noise.
+
+```{r contingency_table_2}
+contingency_table <- table(nypd_ytd$STATISTICAL_MURDER_FLAG, nypd_ytd$DAYLIGHT)
+print (contingency_table)
+```
+
+
+
+
+## 3 Shooting frequency distribution per weekday
+
+Let's look at the frequency distribution per weekdays to see if some days are 
+more "popular" than others.
+```{r bar_plot}
+# first ordering the weekdays in correct order
+nypd_ytd$OCCUR_WEEKDAY <- factor(nypd_ytd$OCCUR_WEEKDAY, 
+                                 levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+# putting the frequency distribution into tab variable
+observed <- table(nypd_ytd$OCCUR_WEEKDAY)
+
+# if random, we would expect a uniform distribution
+expected <- rep(sum(observed)/length(observed), length(observed))
+
+
+# first we'll shorten the names of the weekdays
+original_names <- levels(factor(nypd_ytd$OCCUR_WEEKDAY))
+short_names_map <- c(
+                        "Monday" = "Mon",
+                        "Tuesday" = "Tue",
+                        "Wednesday" = "Wed",
+                        "Thursday" = "Thu",
+                        "Friday" = "Fri",
+                        "Saturday" = "Sat",
+                        "Sunday" = "Sun"
+                        )
+short_names <- short_names_map[original_names]
+
+barplot(observed,
+        main = "Shooting frequency distribution by weekdays",
+        ylim = c(0, max(c(observed, expected)) + 5), 
+        xlab = "Weekday", 
+        ylab = "Frequency", 
+        col = rgb(red = 0.53, green = 0.81, blue = 0.92, alpha = 0.5),
+        # let's shorten the weekday names
+        names.arg = short_names,
+)
+```
+
+Sundays and Saturdays are certainly more "popular" than the rest of the week.
+
+### Checking if the distribution is random
+```{r randomness_check}
+# Chi-square goodness of fit test
+chisq_test_dist <- chisq.test(observed, p = rep(1/length(levels(nypd_ytd$OCCUR_WEEKDAY)), length(levels(nypd_ytd$OCCUR_WEEKDAY))))
+
+# let's see the result
+
+print(chisq_test_dist)
+```
+
+The p-value is well below 0.05 so there is evidence to support the rejection of 
+the null hypothesis (uniform distribution) - some days seem to be more 
+prevalent than others.
+
+
+## Conclusion
+I examined three aspects of the NYPD shooting incident data (Year to date).
+
+1) The first aspect was to see whether there is any relationship between the 
+location classification of the shooting and the time of day (daylight hours or 
+nighttime hours). I discovered that there are some differences between the of
+day when the shooting takes place and the location that it occurs. For example, 
+street shootings and transit shootings are more prevalent during the daytime hours 
+and shootings with a vehicle involved are more prevalent during the nighttime hours.
+
+2) The second aspect - looking at shootings resulting in death, there seems to
+be a slightly higher chance of dying if getting shot during the day, however, the
+difference is marginal and it could simply be due to noise.
+
+3) The third aspect - looking at the weekday distribution of shootings, it is
+clear that Saturdays and Sundays have more shootings take place with Sunday
+coming out on top. However, I was surprised to see that Mondays are beating 
+Fridays in their shooting count, I would have expected Fridays to see more 
+action than Mondays.
+
+#### Possible sources of bias
+The data on the first aspect wasn't great because a considerable number of entries
+had no location classification so a lot of rows were excluded from the analysis.
+If the information was there, it may have changed the result.
+
+On the second aspect, the effect was marginal, so this could simply be noise.
+
+On the third aspect, the result was close to what I would expect.
+
+Also, significantly, for the first and second aspect I classified "daytime" as being 
+between 5am and 10pm which is not ideal. Ideally, it would be better to have a sliding
+daytime/nighttime value that corresponds to astronomical twilight time for the
+specific day of the year. This would result in a more accurate analysis.
+
+Another possible issue could be that have made some technical/statistical
+mistakes in my analysis by using the wrong approach or incorrect filtering, etc.,
+which has resulted in erroneous results.
+
+
+
+```{r session}
+sessionInfo()
+```
